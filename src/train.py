@@ -6,11 +6,10 @@ from pathlib import Path
 import joblib
 from sklearn.datasets import load_breast_cancer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-
 
 ARTIFACT_DIR = Path(os.getenv("ARTIFACT_DIR", "artifacts"))
 RANDOM_STATE = int(os.getenv("RANDOM_STATE", "42"))
@@ -50,8 +49,8 @@ def train() -> dict:
         "precision": float(precision_score(y_test, predictions, zero_division=0)),
         "recall": float(recall_score(y_test, predictions, zero_division=0)),
         "f1_score": float(f1_score(y_test, predictions, zero_division=0)),
-        "n_train": int(len(X_train)),
-        "n_test": int(len(X_test)),
+        "n_train": len(X_train),
+        "n_test": len(X_test),
         "features": list(X.columns),
         "model_type": "RandomForestClassifier",
         "random_state": RANDOM_STATE,
