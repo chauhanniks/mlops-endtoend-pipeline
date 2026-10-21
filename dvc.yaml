@@ -1,0 +1,23 @@
+stages:
+  prepare-data:
+    cmd: python -m src.prepare_data
+    deps:
+      - requirements.txt
+      - src/prepare_data.py
+    outs:
+      - data/breast_cancer.csv
+  train:
+    cmd: RANDOM_STATE=${random_state} N_ESTIMATORS=${n_estimators} python -m src.train
+    deps:
+      - data/breast_cancer.csv
+      - requirements.txt
+      - src/train.py
+    params:
+      - n_estimators
+      - random_state
+    outs:
+      - artifacts/model.joblib
+      - artifacts/feature_names.json
+    metrics:
+      - artifacts/metrics.json:
+          cache: false

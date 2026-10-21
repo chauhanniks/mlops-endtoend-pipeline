@@ -2,7 +2,8 @@
 
 A small, runnable customer-churn classification project for learning:
 - **CI (Continuous Integration):** lint, tests, dependency audit, Docker build.
-- **CT (Continuous Training):** train/evaluate a candidate model when training code/data changes or manually.
+- **CT (Continuous Training):** reproduce the DVC pipeline and evaluate a candidate model when training code/data changes or manually.
+- **Data and experiment tracking:** DVC versions the prepared dataset and pipeline outputs; MLflow records training parameters, metrics, and model artifacts.
 - **CD (Continuous Delivery/Deployment):** build a versioned inference image, deploy to staging, smoke-test, and optionally promote to production.
 
 This starter runs locally with Python + Docker + GitHub Actions. It deliberately does **not** deploy to a real cloud account by default, so you can learn safely without cloud costs. The workflows build artifacts and explain where to add a real deployment target.
@@ -52,11 +53,11 @@ pip install -r requirements-dev.txt
 
 ruff check .
 pytest -q
-python -m src.train
-python -m src.evaluate --model artifacts/model.joblib --metrics artifacts/metrics.json
+dvc repro
+python -m src.evaluate --metrics artifacts/metrics.json
 ```
 
-Training downloads a small public breast-cancer classification dataset through scikit-learn if it is not cached. For offline use, change `src/train.py` to load your own CSV. The dataset is for demonstration only, not a medical product.
+The DVC `prepare-data` stage exports scikit-learn's small public breast-cancer classification dataset to `data/breast_cancer.csv`; the `train` stage consumes this file. The generated CSV is DVC-managed rather than committed directly to Git. It is for demonstration only, not a medical product.
 
 A successful training run writes:
 - `artifacts/model.joblib` — serialized candidate model
@@ -64,7 +65,38 @@ A successful training run writes:
 
 The evaluation command fails if the configured F1 threshold is not met.
 
-## 2. Run the inference API
+## 2. Version data and track experiments
+
+DVC stores data and pipeline outputs in its local cache by default. After `dvc repro`, commit `dvc.yaml`, `dvc.lock` (created by DVC), and `params.yaml` to record the pipeline definition, data version, and parameters. To share cached data between machines, configure a DVC remote and push the cache:
+
+```bash
+dvc remote add -d storage <remote-storage-url>
+dvc push
+```
+
+Keep remote credentials out of Git; use your storage provider's credential mechanism. `dvc pull` restores data and outputs from the configured remote, while `dvc repro` regenerates stale stages.
+
+Each training run is logged to the MLflow experiment `mlops-demo` in the local `mlruns/` directory by default. To view runs:
+
+```bash
+mlflow ui --backend-store-uri file:./mlruns --host 127.0.0.1 --port 5000
+```
+
+Open `http://127.0.0.1:5000`. Port 5000 must be free before starting MLflow. An administrator can identify the listener with:
+
+```bash
+sudo ss -ltnp 'sport = :5000'
+```
+
+If that confirms Datadog owns the port and disabling its monitoring is intended, stop the agent:
+
+```bash
+sudo systemctl stop datadog-agent
+```
+
+Otherwise, reconfigure the service that owns the port. This project does not manage system services. Set `MLFLOW_TRACKING_URI` to use a remote tracking server and `MLFLOW_EXPERIMENT_NAME` to choose another experiment. Training logs the model parameters, dataset SHA-256, evaluation metrics, serialized model, and feature/metric files.
+
+## 3. Run the inference API
 
 After training:
 
@@ -80,7 +112,7 @@ curl http://127.0.0.1:8000/health
 
 The prediction API loads `artifacts/model.joblib` at startup. It expects the numeric feature names used by scikit-learn's breast-cancer dataset. This is a teaching example; replace the schema with your business model's feature contract.
 
-## 3. Run with Docker
+## 4. Run with Docker
 
 Train first, then build the image:
 
@@ -91,7 +123,7 @@ docker run --rm -p 8000:8000 mlops-demo:local
 
 The Docker image includes the trained artifact. For production, prefer a separately versioned model artifact or model registry and a controlled model-loading process. Never load untrusted pickle/joblib artifacts.
 
-## 4. GitHub Actions setup
+## 5. GitHub Actions setup
 
 Push this repository to GitHub. Workflows are in `.github/workflows/`:
 - `ci.yml`: PR/push CI checks.
@@ -100,7 +132,7 @@ Push this repository to GitHub. Workflows are in `.github/workflows/`:
 
 The CD workflow is a **safe template**, not a cloud deployment. Add your target-specific deploy steps after setting up a staging environment. For production, configure a protected GitHub Environment with required reviewers, use OIDC/short-lived credentials for cloud deployments, pin third-party actions to reviewed full commit SHAs, scan images, and implement rollback.
 
-## 5. What to learn / exercise
+## 6. What to learn / exercise
 
 1. Break a unit test and verify CI fails.
 2. Change the `MIN_F1` repository variable (or edit `src/evaluate.py`) to a threshold that the model cannot meet and verify CT fails.
@@ -108,7 +140,7 @@ The CD workflow is a **safe template**, not a cloud deployment. Add your target-
 4. Run the API and send an invalid request; verify input validation rejects it.
 5. Build the Docker image and test `/health`.
 6. Add a staging deployment step for ECS, Kubernetes, or SageMaker.
-7. Add model registry tracking (MLflow or SageMaker Model Registry).
+7. Configure a shared DVC remote and compare dataset versions.
 8. Add data drift monitoring and a retraining trigger.
 9. Add image scanning (Trivy), SBOM generation, and secret scanning.
 10. Add a protected production environment and a rollback procedure.

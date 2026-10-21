@@ -1,0 +1,50 @@
+schema: '2.0'
+stages:
+  prepare-data:
+    cmd: python -m src.prepare_data
+    deps:
+    - path: requirements.txt
+      hash: md5
+      md5: 373d673c844219c35b389cd993794a35
+      size: 124
+    - path: src/prepare_data.py
+      hash: md5
+      md5: 744a01febcde3c9626778b4a5e9f0d16
+      size: 642
+    outs:
+    - path: data/breast_cancer.csv
+      hash: md5
+      md5: 5afc23b9622f8f9ffa60824f4e97d0d5
+      size: 121385
+  train:
+    cmd: RANDOM_STATE=42 N_ESTIMATORS=150 python -m src.train
+    deps:
+    - path: data/breast_cancer.csv
+      hash: md5
+      md5: 5afc23b9622f8f9ffa60824f4e97d0d5
+      size: 121385
+    - path: requirements.txt
+      hash: md5
+      md5: 373d673c844219c35b389cd993794a35
+      size: 124
+    - path: src/train.py
+      hash: md5
+      md5: e579f519b1a60b97ac0bcb5d82d367c1
+      size: 3742
+    params:
+      params.yaml:
+        n_estimators: 150
+        random_state: 42
+    outs:
+    - path: artifacts/feature_names.json
+      hash: md5
+      md5: a085307eeae4f34d4e4abd062f92f363
+      size: 637
+    - path: artifacts/metrics.json
+      hash: md5
+      md5: 3fdfa9e3cb741db918bd83a420c54b4a
+      size: 974
+    - path: artifacts/model.joblib
+      hash: md5
+      md5: b179052135eae4deed4dc853f3383a55
+      size: 497634

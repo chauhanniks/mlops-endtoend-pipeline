@@ -25,9 +25,10 @@ jobs:
         run: ruff check .
       - name: Tests
         run: pytest -q
+      - name: Reproduce DVC pipeline
+        run: dvc repro
       - name: Dependency audit
         run: pip-audit
       - name: Build Docker image
         run: |
-          python -m src.train
           docker build -t mlops-demo:${{ github.sha }} .

@@ -6,8 +6,13 @@ on:
     branches: [main]
     paths:
       - "src/train.py"
+      - "src/prepare_data.py"
       - "src/evaluate.py"
+      - "dvc.yaml"
+      - "dvc.lock"
+      - "params.yaml"
       - "requirements.txt"
+      - "requirements-dev.txt"
 
 permissions:
   contents: read
@@ -24,9 +29,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Train candidate
-        run: python -m src.train
+          pip install -r requirements-dev.txt
+      - name: Reproduce DVC pipeline
+        run: dvc repro
       - name: Evaluate quality gate
         env:
           MIN_F1: "0.90"
@@ -39,5 +44,6 @@ jobs:
             artifacts/model.joblib
             artifacts/metrics.json
             artifacts/feature_names.json
+            mlruns/
             if-no-files-found: error
           retention-days: 14
