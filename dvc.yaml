@@ -18,6 +18,8 @@ stages:
     outs:
       - artifacts/model.joblib
       - artifacts/feature_names.json
+      - artifacts/model_version.json
+      - artifacts/versions
     metrics:
       - artifacts/metrics.json:
           cache: false

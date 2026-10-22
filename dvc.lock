@@ -5,8 +5,8 @@ stages:
     deps:
     - path: requirements.txt
       hash: md5
-      md5: a87e207060bf5511f75bf3fef3a4f7df
-      size: 189
+      md5: 3c3a542c23723ae178d66b36396f2b94
+      size: 218
     - path: src/prepare_data.py
       hash: md5
       md5: 744a01febcde3c9626778b4a5e9f0d16
@@ -25,12 +25,12 @@ stages:
       size: 121385
     - path: requirements.txt
       hash: md5
-      md5: a87e207060bf5511f75bf3fef3a4f7df
-      size: 189
+      md5: 3c3a542c23723ae178d66b36396f2b94
+      size: 218
     - path: src/train.py
       hash: md5
-      md5: 91c849cec9e4b1b0f5fd2448ec92ec17
-      size: 4121
+      md5: 8858791208364cf1f662929ed03b92b1
+      size: 4819
     params:
       params.yaml:
         n_estimators: 150
@@ -42,9 +42,18 @@ stages:
       size: 637
     - path: artifacts/metrics.json
       hash: md5
-      md5: 3fdfa9e3cb741db918bd83a420c54b4a
-      size: 974
+      md5: ae9924d23432943a9fe2e9e242d7df74
+      size: 1029
     - path: artifacts/model.joblib
       hash: md5
       md5: b179052135eae4deed4dc853f3383a55
       size: 497634
+    - path: artifacts/model_version.json
+      hash: md5
+      md5: 2de062c6e1a97a7b025de9648a5620dd
+      size: 57
+    - path: artifacts/versions
+      hash: md5
+      md5: 03e9ad57ee2fc3811c183569a8491d65.dir
+      size: 499300
+      nfiles: 3

@@ -1,4 +1,4 @@
-name: CD - Package and Release Candidate
+name: CD - Deploy to EC2
 
 on:
   workflow_dispatch:
@@ -13,10 +13,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ec2-${{ inputs.target }}
+  cancel-in-progress: false
+
 jobs:
   package:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,25 +44,131 @@ jobs:
           cleanup() { docker logs mlops-demo || true; docker rm -f mlops-demo || true; }
           trap cleanup EXIT
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8000/health; then
-              break
+            if curl --fail --silent http://127.0.0.1:8000/health \
+              | grep --quiet '"model_loaded":true'; then
+              curl --fail --silent http://127.0.0.1:8000/health
+              echo
+              exit 0
             fi
             sleep 2
           done
-          curl --fail --silent http://127.0.0.1:8000/health
+          echo "::error::Candidate API did not report a loaded model."
+          exit 1
       - name: Save image archive
         run: docker save mlops-demo:${{ github.sha }} -o mlops-demo-image.tar
-      - name: Upload release bundle
+      - name: Package deployment configuration
+        run: tar -czf deploy-config.tar.gz docker-compose.yml monitoring
+      - name: Upload deployment bundle
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ github.sha }}
+          name: deployment-${{ github.sha }}
           path: |
             mlops-demo-image.tar
+            deploy-config.tar.gz
             artifacts/metrics.json
             artifacts/feature_names.json
+            artifacts/model_version.json
           retention-days: 14
-      - name: Deployment boundary
+
+  deploy:
+    needs: package
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.target }}
+    steps:
+      - name: Download deployment bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-${{ github.sha }}
+          path: release
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
-          echo "Quality gate and container smoke test passed."
-          echo "This is ephemeral staging validation on the GitHub runner, not a persistent cloud deployment."
-          echo "Add your ECS/EKS/SageMaker deployment and rollback steps here."
+          test -n "$EC2_HOST" || { echo "::error::Set EC2_HOST in the ${{ inputs.target }} environment."; exit 1; }
+          test -n "$EC2_USER" || { echo "::error::Set EC2_USER in the ${{ inputs.target }} environment."; exit 1; }
+          test -n "$EC2_SSH_PRIVATE_KEY" || { echo "::error::Set EC2_SSH_PRIVATE_KEY in the ${{ inputs.target }} environment."; exit 1; }
+          test -n "$EC2_SSH_KNOWN_HOSTS" || { echo "::error::Set EC2_SSH_KNOWN_HOSTS in the ${{ inputs.target }} environment."; exit 1; }
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$HOME/.ssh/ec2_deploy_key"
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/ec2_deploy_key" "$HOME/.ssh/known_hosts"
+          echo "EC2_HOST=$EC2_HOST" >> "$GITHUB_ENV"
+          echo "EC2_USER=$EC2_USER" >> "$GITHUB_ENV"
+      - name: Transfer image and monitoring configuration
+        run: |
+          ssh -i "$HOME/.ssh/ec2_deploy_key" \
+            -o BatchMode=yes \
+            "$EC2_USER@$EC2_HOST" 'mkdir -p "$HOME/mlops-demo"'
+          scp -i "$HOME/.ssh/ec2_deploy_key" \
+            -o BatchMode=yes \
+            release/mlops-demo-image.tar release/deploy-config.tar.gz \
+            "$EC2_USER@$EC2_HOST:/tmp/"
+      - name: Deploy and verify on EC2
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ssh -i "$HOME/.ssh/ec2_deploy_key" \
+            -o BatchMode=yes \
+            "$EC2_USER@$EC2_HOST" "IMAGE_TAG='$IMAGE_TAG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          deploy_dir="$HOME/mlops-demo"
+          trap 'rm -f /tmp/mlops-demo-image.tar /tmp/deploy-config.tar.gz' EXIT
+          test -f "$deploy_dir/.env" || {
+            echo "Create $deploy_dir/.env on EC2 with GRAFANA_ADMIN_PASSWORD before deploying."
+            exit 1
+          }
+          previous_image_tag="$(sed -n 's/^IMAGE_TAG=//p' "$deploy_dir/.env" | tail -n 1)"
+          set_image_tag() {
+            awk -v tag="$1" '
+              BEGIN { updated = 0 }
+              /^IMAGE_TAG=/ {
+                if (!updated) print "IMAGE_TAG=" tag
+                updated = 1
+                next
+              }
+              { print }
+              END {
+                if (!updated) print "IMAGE_TAG=" tag
+              }
+            ' "$deploy_dir/.env" > "$deploy_dir/.env.tmp"
+            chmod 600 "$deploy_dir/.env.tmp"
+            mv "$deploy_dir/.env.tmp" "$deploy_dir/.env"
+          }
+          docker load -i /tmp/mlops-demo-image.tar
+          tar -xzf /tmp/deploy-config.tar.gz -C "$deploy_dir"
+          cd "$deploy_dir"
+          set_image_tag "$IMAGE_TAG"
+          rollback() {
+            if [ -n "$previous_image_tag" ] \
+              && docker image inspect "mlops-demo:$previous_image_tag" >/dev/null 2>&1; then
+              echo "Restoring previous image $previous_image_tag."
+              set_image_tag "$previous_image_tag"
+              if ! docker compose up -d --no-build; then
+                echo "Rollback failed; inspect the Compose logs on EC2."
+                docker compose logs --tail=100 || true
+              fi
+            fi
+          }
+          if ! docker compose up -d --no-build; then
+            docker compose logs --tail=100 || true
+            rollback
+            exit 1
+          fi
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health \
+              | grep --quiet '"model_loaded":true'; then
+              curl --fail --silent http://127.0.0.1:8000/health
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs --tail=100 api
+          rollback
+          exit 1
+          REMOTE

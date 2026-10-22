@@ -4,6 +4,7 @@ scikit-learn>=1.5,<2.0
 pandas>=2.2,<3.0
 joblib>=1.4,<2.0
 mlflow>=3.17.2,<4.0
+prometheus-client>=0.21,<1.0
 certifi>=2026.10.19
 pillow>=13.0.0,<14.0
 pyarrow>=23.0.1,<26.0

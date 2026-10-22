@@ -44,6 +44,8 @@ jobs:
             artifacts/model.joblib
             artifacts/metrics.json
             artifacts/feature_names.json
+            artifacts/model_version.json
+            artifacts/versions/
             mlruns/
             if-no-files-found: error
           retention-days: 14

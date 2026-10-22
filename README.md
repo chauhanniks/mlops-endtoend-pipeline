@@ -3,10 +3,11 @@
 A small, runnable customer-churn classification project for learning:
 - **CI (Continuous Integration):** lint, tests, dependency audit, Docker build.
 - **CT (Continuous Training):** reproduce the DVC pipeline and evaluate a candidate model when training code/data changes or manually.
-- **Data and experiment tracking:** DVC versions the prepared dataset and pipeline outputs; MLflow records training parameters, metrics, and model artifacts.
+- **Data and model versioning:** DVC versions pipeline outputs, and every MLflow training run gets an immutable, run-ID-based model snapshot that can be selected at API startup.
+- **Monitoring:** Prometheus scrapes API request, latency, and prediction metrics; Grafana provisions a dashboard automatically.
 - **CD (Continuous Delivery/Deployment):** build a versioned inference image, deploy to staging, smoke-test, and optionally promote to production.
 
-This starter runs locally with Python + Docker + GitHub Actions. It deliberately does **not** deploy to a real cloud account by default, so you can learn safely without cloud costs. The workflows build artifacts and explain where to add a real deployment target.
+This starter runs locally with Python + Docker Compose + GitHub Actions. It includes a single-EC2 Docker Compose deployment path, but does not create AWS resources or deploy to a cloud account automatically.
 
 ## Architecture
 
@@ -36,7 +37,7 @@ CI, CT, and CD are separate workflows because an application-code change should 
 
 - Python 3.11+
 - Git
-- Docker (optional for local container steps)
+- Docker and the Docker Compose plugin
 - GitHub account for Actions workflow practice
 
 ## 1. Run locally
@@ -62,6 +63,8 @@ The DVC `prepare-data` stage exports scikit-learn's small public breast-cancer c
 A successful training run writes:
 - `artifacts/model.joblib` — serialized candidate model
 - `artifacts/metrics.json` — evaluation metrics and model metadata
+- `artifacts/model_version.json` — pointer to the latest immutable model version
+- `artifacts/versions/<mlflow-run-id>/` — model, feature schema, and metrics snapshot for that run
 
 The evaluation command fails if the configured F1 threshold is not met.
 
@@ -76,7 +79,15 @@ dvc push
 
 Keep remote credentials out of Git; use your storage provider's credential mechanism. `dvc pull` restores data and outputs from the configured remote, while `dvc repro` regenerates stale stages.
 
-Each training run is logged to the MLflow experiment `mlops-demo` in a local SQLite database (`mlflow.db`) with model artifacts in `mlartifacts/` by default. To view runs:
+Each training run is logged to the MLflow experiment `mlops-demo` in a local SQLite database (`mlflow.db`) with model artifacts in `mlartifacts/` by default. The MLflow run ID is also used as the immutable model version, and its snapshot is included in the DVC pipeline output. Use the DVC remote configured above to share model versions with EC2. On another machine, use `dvc pull` to restore the pipeline outputs. To see the current version ID:
+
+```bash
+python -c "import json; print(json.load(open('artifacts/model_version.json'))['model_version'])"
+```
+
+To serve a particular version, set `MODEL_VERSION` to that exact run ID; `latest` selects the version in `model_version.json`. Keep DVC remote credentials out of Git and grant the EC2 instance access using an IAM role where possible.
+
+To view MLflow runs:
 
 ```bash
 mlflow ui --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --port 5000
@@ -116,36 +127,81 @@ In another terminal:
 curl http://127.0.0.1:8000/health
 ```
 
-The prediction API loads `artifacts/model.joblib` at startup. It expects the numeric feature names used by scikit-learn's breast-cancer dataset. This is a teaching example; replace the schema with your business model's feature contract.
+The prediction API loads the latest versioned snapshot at startup. Set `MODEL_VERSION` to an exact MLflow run ID to pin or roll back the serving model. It expects the numeric feature names used by scikit-learn's breast-cancer dataset. This is a teaching example; replace the schema with your business model's feature contract. The `/metrics` endpoint exposes Prometheus metrics and `/health` reports the loaded model version.
 
-## 4. Run with Docker
+## 4. Run the API and monitoring locally
 
-Train first, then build the image:
+Train first and prepare the local environment file:
 
 ```bash
-docker build -t mlops-demo:local .
-docker run --rm -p 8000:8000 mlops-demo:local
+cp .env.example .env
+# Set GRAFANA_ADMIN_PASSWORD in .env to a unique password.
+docker compose up --build -d
 ```
 
-The Docker image includes the trained artifact. For production, prefer a separately versioned model artifact or model registry and a controlled model-loading process. Never load untrusted pickle/joblib artifacts.
+The API is available at `http://localhost:8000`; Grafana is at `http://localhost:3000` (user `admin`), and Prometheus is at `http://localhost:9090`. Grafana is preconfigured with the Prometheus data source and the MLOps API dashboard. Verify API metrics at `http://localhost:8000/metrics`.
 
-## 5. GitHub Actions setup
+Set `MODEL_VERSION` in `.env` to a version ID to pin or roll back the model, then recreate the API:
+
+```bash
+docker compose up -d --build api
+```
+
+To stop the stack, run `docker compose down`. Prometheus and Grafana data persist in Docker volumes. The Docker image includes the versioned model snapshots available at build time. Never load untrusted pickle/joblib artifacts.
+
+## 5. Deploy on AWS EC2
+
+This is a single-host learning deployment, not a highly available production architecture.
+
+1. Launch an Ubuntu EC2 instance with enough memory for Docker and the model. Install Docker Engine, the Docker Compose plugin, and `curl`; configure the EC2 user to run Docker without `sudo`.
+2. In the EC2 security group, allow SSH only from your trusted self-hosted GitHub runner or other restricted deployment source. Do not open SSH to `0.0.0.0/0`. Allow TCP `8000` only from trusted API clients. Do **not** expose Prometheus `9090` or Grafana `3000` publicly. Add a TLS reverse proxy and domain for production use.
+3. Prepare the persistent deployment directory and environment file on EC2:
+
+   ```bash
+   mkdir -p "$HOME/mlops-demo"
+   cp .env.example "$HOME/mlops-demo/.env"
+   chmod 600 "$HOME/mlops-demo/.env"
+   # Edit $HOME/mlops-demo/.env and set a unique GRAFANA_ADMIN_PASSWORD.
+   ```
+
+   Copy `.env.example` from this repository if needed. The deployment workflow preserves this file and updates only its `IMAGE_TAG`.
+4. In GitHub, create environments named `staging` and `production` under **Settings → Environments**. Add these secrets to each environment:
+
+   - `EC2_HOST` — EC2 public DNS name or reachable IP.
+   - `EC2_USER` — SSH user, for example `ubuntu`.
+   - `EC2_SSH_PRIVATE_KEY` — private key authorized for that EC2 user.
+   - `EC2_SSH_KNOWN_HOSTS` — verified SSH host-key line(s) for the instance.
+
+   Obtain and verify the EC2 host key through a trusted channel before saving it; the workflow uses strict host-key checking. Protect `production` with required reviewers in its environment settings to require manual approval before deployment. A self-hosted runner inside your VPC avoids exposing SSH to GitHub-hosted runner address ranges.
+5. In **Actions → CD - Deploy to EC2 → Run workflow**, select `staging` or `production`. The workflow trains and quality-gates a model, builds and smoke-tests the image, then pauses for any configured environment approval. After approval it transfers the image and monitoring configuration over SSH, starts the Compose stack, and checks that the API reports a loaded model. If a deployment health check fails and a prior image is present, it attempts to restore the prior image.
+
+The API is reachable on port `8000`. To access Grafana securely from your workstation, create an SSH tunnel:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 ubuntu@<EC2-public-IP>
+```
+
+Then open `http://localhost:3000` for Grafana or `http://localhost:9090` for Prometheus.
+
+The workflow deploys the image built from the selected commit, including that run's versioned model. To roll back, run the workflow using the previous release commit; the workflow updates `IMAGE_TAG` and redeploys that image. Monitor disk usage and back up the EC2 volumes; this setup does not include automated cloud provisioning, HTTPS termination, alert routing, or multi-instance scaling.
+
+## 6. GitHub Actions setup
 
 Push this repository to GitHub. Workflows are in `.github/workflows/`:
 - `ci.yml`: PR/push CI checks.
 - `ct.yml`: manual or training-source-triggered training and evaluation.
-- `cd.yml`: manual deployment workflow demonstrating staging/production gates and Docker image publication as a workflow artifact.
+- `cd.yml`: manual quality-gated build, protected-environment approval, and SSH deployment to the selected EC2 target.
 
-The CD workflow is a **safe template**, not a cloud deployment. Add your target-specific deploy steps after setting up a staging environment. For production, configure a protected GitHub Environment with required reviewers, use OIDC/short-lived credentials for cloud deployments, pin third-party actions to reviewed full commit SHAs, scan images, and implement rollback.
+The CD workflow deploys through SSH and uses no AWS access keys. Protect production with required GitHub Environment reviewers, pin third-party actions to reviewed full commit SHAs, scan images, and test rollback procedures.
 
-## 6. What to learn / exercise
+## 7. What to learn / exercise
 
 1. Break a unit test and verify CI fails.
 2. Change the `MIN_F1` repository variable (or edit `src/evaluate.py`) to a threshold that the model cannot meet and verify CT fails.
 3. Change a training parameter and run CT.
 4. Run the API and send an invalid request; verify input validation rejects it.
-5. Build the Docker image and test `/health`.
-6. Add a staging deployment step for ECS, Kubernetes, or SageMaker.
+5. Build the Docker Compose stack and inspect API metrics in Grafana.
+6. Deploy the Compose stack to a small EC2 instance.
 7. Configure a shared DVC remote and compare dataset versions.
 8. Add data drift monitoring and a retraining trigger.
 9. Add image scanning (Trivy), SBOM generation, and secret scanning.

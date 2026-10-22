@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 import joblib
@@ -76,12 +77,14 @@ def train() -> dict:
     metrics_path = ARTIFACT_DIR / "metrics.json"
     features_path = ARTIFACT_DIR / "feature_names.json"
     joblib.dump(model, model_path)
-    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     features_path.write_text(json.dumps(list(X.columns), indent=2), encoding="utf-8")
 
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "mlops-demo"))
-    with mlflow.start_run(run_name="random-forest-candidate"):
+    with mlflow.start_run(run_name="random-forest-candidate") as run:
+        model_version = run.info.run_id
+        metrics["model_version"] = model_version
+        metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
         mlflow.log_params({
             "random_state": RANDOM_STATE,
             "n_estimators": N_ESTIMATORS,
@@ -101,6 +104,20 @@ def train() -> dict:
         )
         mlflow.log_artifact(str(metrics_path))
         mlflow.log_artifact(str(features_path))
+
+    versions_dir = ARTIFACT_DIR / "versions"
+    version_dir = versions_dir / model_version
+    version_dir.mkdir(parents=True, exist_ok=True)
+    for path in (model_path, features_path, metrics_path):
+        shutil.copy2(path, version_dir / path.name)
+
+    version_manifest = {"model_version": model_version}
+    manifest_path = ARTIFACT_DIR / "model_version.json"
+    temporary_manifest = manifest_path.with_suffix(".json.tmp")
+    temporary_manifest.write_text(
+        json.dumps(version_manifest, indent=2), encoding="utf-8"
+    )
+    temporary_manifest.replace(manifest_path)
 
     print(json.dumps(metrics, indent=2))
     return metrics

@@ -20,7 +20,15 @@ def test_training_creates_artifacts(tmp_path, monkeypatch):
     assert (tmp_path / "model.joblib").exists()
     assert (tmp_path / "metrics.json").exists()
     assert (tmp_path / "feature_names.json").exists()
+    assert (tmp_path / "model_version.json").exists()
     assert 0.0 <= metrics["f1_score"] <= 1.0
+    version = metrics["model_version"]
+    version_dir = tmp_path / "versions" / version
+    assert (version_dir / "model.joblib").exists()
+    assert (version_dir / "feature_names.json").exists()
+    assert json.loads((tmp_path / "model_version.json").read_text()) == {
+        "model_version": version
+    }
 
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name("mlops-demo")
