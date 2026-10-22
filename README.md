@@ -76,10 +76,10 @@ dvc push
 
 Keep remote credentials out of Git; use your storage provider's credential mechanism. `dvc pull` restores data and outputs from the configured remote, while `dvc repro` regenerates stale stages.
 
-Each training run is logged to the MLflow experiment `mlops-demo` in the local `mlruns/` directory by default. To view runs:
+Each training run is logged to the MLflow experiment `mlops-demo` in a local SQLite database (`mlflow.db`) with model artifacts in `mlartifacts/` by default. To view runs:
 
 ```bash
-mlflow ui --backend-store-uri file:./mlruns --host 127.0.0.1 --port 5000
+mlflow ui --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --port 5000
 ```
 
 Open `http://127.0.0.1:5000`. Port 5000 must be free before starting MLflow. An administrator can identify the listener with:
@@ -95,6 +95,12 @@ sudo systemctl stop datadog-agent
 ```
 
 Otherwise, reconfigure the service that owns the port. This project does not manage system services. Set `MLFLOW_TRACKING_URI` to use a remote tracking server and `MLFLOW_EXPERIMENT_NAME` to choose another experiment. Training logs the model parameters, dataset SHA-256, evaluation metrics, serialized model, and feature/metric files.
+
+If you have runs in the older `mlruns/` file store, back it up and migrate it before logging new runs to SQLite:
+
+```bash
+mlflow migrate-filestore --source ./mlruns --target sqlite:///mlflow.db
+```
 
 ## 3. Run the inference API
 
@@ -151,6 +157,7 @@ The CD workflow is a **safe template**, not a cloud deployment. Add your target-
 - Do not commit credentials, production data, or model artifacts.
 - Pin actions to reviewed commit SHAs for production.
 - Use OIDC instead of long-lived cloud keys.
+- CI currently ignores `PYSEC-2026-2447` because DVC depends on diskcache 5.6.3 and no fixed release is available; remove the exception once DVC adopts a patched version.
 - Add an explicit model/data license and privacy review before using real datasets.
 - Test the full pipeline with representative data before relying on its quality gate.
 - The built-in demo dataset and default F1 threshold are pedagogical examples, not production acceptance criteria.

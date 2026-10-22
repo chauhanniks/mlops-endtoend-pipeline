@@ -8,6 +8,7 @@ import joblib
 import mlflow
 import mlflow.sklearn
 import pandas as pd
+from mlflow.models import infer_signature
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
@@ -54,6 +55,8 @@ def train() -> dict:
     ])
     model.fit(X_train, y_train)
     predictions = model.predict(X_test)
+    input_example = X_train.head(5)
+    signature = infer_signature(input_example, model.predict(input_example))
 
     metrics = {
         "accuracy": float(accuracy_score(y_test, predictions)),
@@ -76,7 +79,7 @@ def train() -> dict:
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     features_path.write_text(json.dumps(list(X.columns), indent=2), encoding="utf-8")
 
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"))
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "mlops-demo"))
     with mlflow.start_run(run_name="random-forest-candidate"):
         mlflow.log_params({
@@ -88,7 +91,14 @@ def train() -> dict:
         mlflow.log_metrics({
             key: metrics[key] for key in ("accuracy", "precision", "recall", "f1_score")
         })
-        mlflow.sklearn.log_model(model, artifact_path="model")
+        mlflow.sklearn.log_model(
+            model,
+            name="model",
+            signature=signature,
+            input_example=input_example,
+            serialization_format="skops",
+            skops_trusted_types=["numpy.dtype", "sklearn.tree._tree.Tree"],
+        )
         mlflow.log_artifact(str(metrics_path))
         mlflow.log_artifact(str(features_path))
 

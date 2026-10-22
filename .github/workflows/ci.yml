@@ -28,7 +28,8 @@ jobs:
       - name: Reproduce DVC pipeline
         run: dvc repro
       - name: Dependency audit
-        run: pip-audit
+        # DVC depends on diskcache 5.6.3; PYSEC-2026-2447 has no fixed release yet.
+        run: pip-audit --ignore-vuln PYSEC-2026-2447
       - name: Build Docker image
         run: |
           docker build -t mlops-demo:${{ github.sha }} .

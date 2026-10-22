@@ -5,6 +5,8 @@ __pycache__/
 artifacts/*
 !artifacts/.gitkeep
 /mlruns/
+/mlartifacts/
+/mlflow.db*
 *.py[cod]
 .env
 .DS_Store
