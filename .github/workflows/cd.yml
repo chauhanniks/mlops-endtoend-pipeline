@@ -104,10 +104,14 @@ jobs:
           ssh -i "$HOME/.ssh/ec2_deploy_key" \
             -o BatchMode=yes \
             "$EC2_USER@$EC2_HOST" 'mkdir -p "$HOME/mlops-demo"'
+          ssh -i "$HOME/.ssh/ec2_deploy_key" \
+            -o BatchMode=yes \
+            "$EC2_USER@$EC2_HOST" 'docker load' \
+            < release/mlops-demo-image.tar
           scp -i "$HOME/.ssh/ec2_deploy_key" \
             -o BatchMode=yes \
-            release/mlops-demo-image.tar release/deploy-config.tar.gz \
-            "$EC2_USER@$EC2_HOST:/tmp/"
+            release/deploy-config.tar.gz \
+            "$EC2_USER@$EC2_HOST:mlops-demo/deploy-config.tar.gz"
       - name: Deploy and verify on EC2
         env:
           IMAGE_TAG: ${{ github.sha }}
@@ -117,7 +121,7 @@ jobs:
             "$EC2_USER@$EC2_HOST" "IMAGE_TAG='$IMAGE_TAG' bash -s" <<'REMOTE'
           set -euo pipefail
           deploy_dir="$HOME/mlops-demo"
-          trap 'rm -f /tmp/mlops-demo-image.tar /tmp/deploy-config.tar.gz' EXIT
+          trap 'rm -f "$deploy_dir/deploy-config.tar.gz"' EXIT
           test -f "$deploy_dir/.env" || {
             echo "Create $deploy_dir/.env on EC2 with GRAFANA_ADMIN_PASSWORD before deploying."
             exit 1
@@ -139,8 +143,7 @@ jobs:
             chmod 600 "$deploy_dir/.env.tmp"
             mv "$deploy_dir/.env.tmp" "$deploy_dir/.env"
           }
-          docker load -i /tmp/mlops-demo-image.tar
-          tar -xzf /tmp/deploy-config.tar.gz -C "$deploy_dir"
+          tar -xzf "$deploy_dir/deploy-config.tar.gz" -C "$deploy_dir"
           cd "$deploy_dir"
           set_image_tag "$IMAGE_TAG"
           rollback() {
