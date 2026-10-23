@@ -30,11 +30,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Train and gate candidate
+          pip install "dvc>=3.0,<4.0"
+      - name: Reproduce pipeline and gate candidate
         env:
           MIN_F1: "0.90"
         run: |
-          python -m src.train
+          dvc repro
           python -m src.evaluate --metrics artifacts/metrics.json
       - name: Build release image
         run: docker build -t mlops-demo:${{ github.sha }} .
