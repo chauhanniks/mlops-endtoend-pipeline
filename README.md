@@ -173,7 +173,7 @@ This is a single-host learning deployment, not a highly available production arc
    - `EC2_SSH_KNOWN_HOSTS` — verified SSH host-key line(s) for the instance.
 
    Obtain and verify the EC2 host key through a trusted channel before saving it; the workflow uses strict host-key checking. Protect `production` with required reviewers in its environment settings to require manual approval before deployment. A self-hosted runner inside your VPC avoids exposing SSH to GitHub-hosted runner address ranges.
-5. In **Actions → CD - Deploy to EC2 → Run workflow**, select `staging` or `production`. The workflow trains and quality-gates a model, builds and smoke-tests the image, then pauses for any configured environment approval. After approval it transfers the image and monitoring configuration over SSH, starts the Compose stack, and checks that the API reports a loaded model. If a deployment health check fails and a prior image is present, it attempts to restore the prior image.
+5. In **Actions → CD - Deploy to EC2 → Run workflow**, select `staging` or `production`. The workflow trains and quality-gates a model, builds and smoke-tests the image, then pauses for any configured environment approval. After approval it streams the image directly into Docker and the monitoring configuration into `~/mlops-demo/` over SSH; it does not stage deployment archives in EC2's `/tmp`. It then starts the Compose stack and checks that the API reports a loaded model. If a deployment health check fails and a prior image is present, it attempts to restore the prior image.
 
 The API is reachable on port `8000`. To access Grafana securely from your workstation, create an SSH tunnel:
 
