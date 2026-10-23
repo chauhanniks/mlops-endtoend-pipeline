@@ -100,10 +100,22 @@ jobs:
           echo "EC2_HOST=$EC2_HOST" >> "$GITHUB_ENV"
           echo "EC2_USER=$EC2_USER" >> "$GITHUB_ENV"
       - name: Transfer image and monitoring configuration
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         run: |
+          [[ "$GRAFANA_ADMIN_PASSWORD" =~ ^[A-Fa-f0-9]{64,}$ ]] || {
+            echo "::error::Set GRAFANA_ADMIN_PASSWORD to a hex password generated with 'openssl rand -hex 32' in the ${{ inputs.target }} environment."
+            exit 1
+          }
           ssh -i "$HOME/.ssh/ec2_deploy_key" \
             -o BatchMode=yes \
             "$EC2_USER@$EC2_HOST" 'mkdir -p "$HOME/mlops-demo"'
+          printf 'API_PORT=8000\nIMAGE_TAG=local\nMODEL_VERSION=latest\nGRAFANA_ADMIN_PASSWORD=%s\n' \
+            "$GRAFANA_ADMIN_PASSWORD" \
+            | ssh -i "$HOME/.ssh/ec2_deploy_key" \
+              -o BatchMode=yes \
+              "$EC2_USER@$EC2_HOST" \
+              'set -eu; deploy_dir="$HOME/mlops-demo"; if [ -e "$deploy_dir/.env" ]; then cat >/dev/null; else umask 077; cat > "$deploy_dir/.env.tmp"; mv "$deploy_dir/.env.tmp" "$deploy_dir/.env"; fi'
           ssh -i "$HOME/.ssh/ec2_deploy_key" \
             -o BatchMode=yes \
             "$EC2_USER@$EC2_HOST" 'docker load' \
@@ -123,10 +135,6 @@ jobs:
           set -euo pipefail
           deploy_dir="$HOME/mlops-demo"
           trap 'rm -f "$deploy_dir/deploy-config.tar.gz"' EXIT
-          test -f "$deploy_dir/.env" || {
-            echo "Create $deploy_dir/.env on EC2 with GRAFANA_ADMIN_PASSWORD before deploying."
-            exit 1
-          }
           previous_image_tag="$(sed -n 's/^IMAGE_TAG=//p' "$deploy_dir/.env" | tail -n 1)"
           set_image_tag() {
             awk -v tag="$1" '

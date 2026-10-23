@@ -155,22 +155,15 @@ This is a single-host learning deployment, not a highly available production arc
 
 1. Launch an Ubuntu EC2 instance with enough memory for Docker and the model. Install Docker Engine, the Docker Compose plugin, and `curl`; configure the EC2 user to run Docker without `sudo`.
 2. In the EC2 security group, allow SSH only from your trusted self-hosted GitHub runner or other restricted deployment source. Do not open SSH to `0.0.0.0/0`. Allow TCP `8000` only from trusted API clients. Do **not** expose Prometheus `9090` or Grafana `3000` publicly. Add a TLS reverse proxy and domain for production use.
-3. Prepare the persistent deployment directory and environment file on EC2:
+3. Add `GRAFANA_ADMIN_PASSWORD` as a secret to each GitHub environment. Generate a unique password, for example with `openssl rand -hex 32`. On first deployment, the workflow creates `~/mlops-demo/.env` with this password and restrictive permissions. Existing `.env` files are preserved, so update the password there yourself if needed; the workflow updates only `IMAGE_TAG`.
 
-   ```bash
-   mkdir -p "$HOME/mlops-demo"
-   cp .env.example "$HOME/mlops-demo/.env"
-   chmod 600 "$HOME/mlops-demo/.env"
-   # Edit $HOME/mlops-demo/.env and set a unique GRAFANA_ADMIN_PASSWORD.
-   ```
-
-   Copy `.env.example` from this repository if needed. The deployment workflow preserves this file and updates only its `IMAGE_TAG`.
 4. In GitHub, create environments named `staging` and `production` under **Settings → Environments**. Add these secrets to each environment:
 
    - `EC2_HOST` — EC2 public DNS name or reachable IP.
    - `EC2_USER` — SSH user, for example `ubuntu`.
    - `EC2_SSH_PRIVATE_KEY` — private key authorized for that EC2 user.
    - `EC2_SSH_KNOWN_HOSTS` — verified SSH host-key line(s) for the instance.
+   - `GRAFANA_ADMIN_PASSWORD` — a unique Grafana admin password, such as the output of `openssl rand -hex 32`.
 
    Obtain and verify the EC2 host key through a trusted channel before saving it; the workflow uses strict host-key checking. Protect `production` with required reviewers in its environment settings to require manual approval before deployment. A self-hosted runner inside your VPC avoids exposing SSH to GitHub-hosted runner address ranges.
 5. In **Actions → CD - Deploy to EC2 → Run workflow**, select `staging` or `production`. The workflow trains and quality-gates a model, builds and smoke-tests the image, then pauses for any configured environment approval. After approval it streams the image directly into Docker and the monitoring configuration into `~/mlops-demo/` over SSH; it does not stage deployment archives in EC2's `/tmp`. It then starts the Compose stack and checks that the API reports a loaded model. If a deployment health check fails and a prior image is present, it attempts to restore the prior image.
